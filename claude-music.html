@@ -1015,22 +1015,31 @@ async function loadRecs() {
       return `artist:"${a}"${moodExtra}`;
     });
     for (const q of queries) {
-      const offset = Math.floor(Math.random() * 5) * 5;
-      const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=10&offset=${offset}`);
+      const offset = Math.floor(Math.random() * 4) * 5;
+      const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=20&offset=${offset}`);
       if (data?.tracks?.items) {
         const fresh = data.tracks.items.filter(t => {
           if (exclude.has(t.name.toLowerCase())) return false;
-          // Filter out blocked artists
           if (t.artists.some(a => blocked.has(a.name.toLowerCase()))) return false;
           return true;
         });
-        if (fresh.length) {
-          const pick = fresh[Math.floor(Math.random() * Math.min(fresh.length, 4))];
-          tracks.push(pick);
-          exclude.add(pick.name.toLowerCase());
-        }
+        // Take up to 2 per artist query to fill slots faster
+        const picks = fresh.slice(0, 2);
+        picks.forEach(p => { tracks.push(p); exclude.add(p.name.toLowerCase()); });
       }
       if (tracks.length >= 8) break;
+    }
+    // If still under 8, do extra searches with mood bias alone
+    if (tracks.length < 8) {
+      const moodQ = mood.bias || 'indie chill';
+      const data = await api(`/search?q=${encodeURIComponent(moodQ)}&type=track&limit=20&offset=${Math.floor(Math.random()*10)*2}`);
+      if (data?.tracks?.items) {
+        const fresh = data.tracks.items.filter(t =>
+          !exclude.has(t.name.toLowerCase()) &&
+          !t.artists.some(a => blocked.has(a.name.toLowerCase()))
+        );
+        fresh.slice(0, 8 - tracks.length).forEach(t => { tracks.push(t); exclude.add(t.name.toLowerCase()); });
+      }
     }
     // Top up with fallback if needed
     if (tracks.length < 8) {
@@ -1064,9 +1073,16 @@ async function loadRecs() {
   // Save these as seen so they won't repeat next refresh
   addSeenRecs(tracks);
 
-  // Show history count
-  const histNote = history.length > 0 ? `<div style="font-size:10px;color:var(--muted);margin-bottom:8px;letter-spacing:1px">${history.length} TRACKS IN YOUR HISTORY</div>` : '';
-  document.getElementById('recs-area').insertAdjacentHTML('beforebegin', histNote);
+  // Show history count - remove old note first to avoid duplicates
+  const oldNote = document.getElementById('hist-note');
+  if (oldNote) oldNote.remove();
+  if (history.length > 0) {
+    const note = document.createElement('div');
+    note.id = 'hist-note';
+    note.style = 'font-size:10px;color:var(--muted);margin-bottom:8px;letter-spacing:1px';
+    note.textContent = `${history.length} TRACKS IN YOUR HISTORY`;
+    document.getElementById('recs-area').insertAdjacentElement('beforebegin', note);
+  }
   renderTracks(tracks, 'recs-area');
 }
 
