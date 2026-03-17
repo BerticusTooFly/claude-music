@@ -29,17 +29,28 @@
     flex-direction: column;
     align-items: center;
     padding: 40px 20px;
+    position: relative;
   }
 
-  /* Grain overlay */
+  /* GIF background */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: url('https://media1.tenor.com/m/t0OLwEhsg8sAAAAd/waterfall-for-gdeyes.gif') center center / cover no-repeat;
+    opacity: 0.18;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  /* Dark overlay so text stays readable */
   body::before {
     content: '';
     position: fixed;
     inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    background: rgba(0,0,0,0.72);
+    z-index: -1;
     pointer-events: none;
-    z-index: 1000;
-    opacity: 0.4;
   }
 
   .container {
@@ -816,21 +827,42 @@ function getTopArtists(limit = 6) {
     .map(e => e[0]);
 }
 
+function getSeenRecs() {
+  try { return new Set(JSON.parse(localStorage.getItem('cm_seen_recs') || '[]')); } catch { return new Set(); }
+}
+
+function addSeenRecs(tracks) {
+  const seen = getSeenRecs();
+  tracks.forEach(t => seen.add(t.name.toLowerCase()));
+  // Keep last 200 seen recs, trim if over
+  const arr = [...seen].slice(-200);
+  localStorage.setItem('cm_seen_recs', JSON.stringify(arr));
+}
+
 async function loadRecs() {
   document.getElementById('recs-area').innerHTML = '<div class="status-msg">Finding tracks...</div>';
   const history = getHistory();
   const tracks = [];
-  const seen = new Set(history.map(h => h.trackName.toLowerCase()));
+  // Exclude both played tracks AND previously recommended tracks
+  const played = new Set(history.map(h => h.trackName.toLowerCase()));
+  const seenRecs = getSeenRecs();
+  const exclude = new Set([...played, ...seenRecs]);
 
   if (history.length >= 3) {
-    // Adaptive mode: search for tracks by top artists, avoid already-played ones
-    const topArtists = getTopArtists(6);
-    const queries = shuffle([...topArtists]).slice(0, 8).map(a => `artist:"${a}"`);
+    // Adaptive mode: use top artists, random offset to avoid same results
+    const topArtists = getTopArtists(8);
+    const queries = shuffle([...topArtists]).map(a => `artist:"${a}"`);
     for (const q of queries) {
-      const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=4`);
+      // Random offset (0, 5, 10, 15, 20) so we don't always get track #1
+      const offset = Math.floor(Math.random() * 5) * 5;
+      const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=10&offset=${offset}`);
       if (data?.tracks?.items) {
-        const fresh = data.tracks.items.filter(t => !seen.has(t.name.toLowerCase()));
-        if (fresh.length) tracks.push(fresh[Math.floor(Math.random() * fresh.length)]);
+        const fresh = data.tracks.items.filter(t => !exclude.has(t.name.toLowerCase()));
+        if (fresh.length) {
+          const pick = fresh[Math.floor(Math.random() * Math.min(fresh.length, 4))];
+          tracks.push(pick);
+          exclude.add(pick.name.toLowerCase());
+        }
       }
       if (tracks.length >= 8) break;
     }
@@ -839,15 +871,22 @@ async function loadRecs() {
       const fallback = shuffle([...FALLBACK_RECS]).slice(0, 8 - tracks.length);
       for (const q of fallback) {
         const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=1`);
-        if (data?.tracks?.items?.[0]) tracks.push(data.tracks.items[0]);
+        if (data?.tracks?.items?.[0]) {
+          const t = data.tracks.items[0];
+          if (!exclude.has(t.name.toLowerCase())) tracks.push(t);
+        }
       }
     }
   } else {
     // New user fallback
-    const picked = shuffle([...FALLBACK_RECS]).slice(0, 8);
+    const picked = shuffle([...FALLBACK_RECS]).slice(0, 12);
     for (const q of picked) {
+      if (tracks.length >= 8) break;
       const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=1`);
-      if (data?.tracks?.items?.[0]) tracks.push(data.tracks.items[0]);
+      if (data?.tracks?.items?.[0]) {
+        const t = data.tracks.items[0];
+        if (!exclude.has(t.name.toLowerCase())) tracks.push(t);
+      }
     }
   }
 
@@ -856,7 +895,10 @@ async function loadRecs() {
     return;
   }
 
-  // Show how many tracks in history
+  // Save these as seen so they won't repeat next refresh
+  addSeenRecs(tracks);
+
+  // Show history count
   const histNote = history.length > 0 ? `<div style="font-size:10px;color:var(--muted);margin-bottom:8px;letter-spacing:1px">${history.length} TRACKS IN YOUR HISTORY</div>` : '';
   document.getElementById('recs-area').insertAdjacentHTML('beforebegin', histNote);
   renderTracks(tracks, 'recs-area');
