@@ -764,37 +764,38 @@ function renderTracks(tracks, containerId) {
   el.appendChild(div);
 }
 
-// ── Recommendations ───────────────────────────────────
-// Seed tracks based on your taste from the screenshots
-const SEED_TRACKS_QUERIES = [
-  'Tyler The Creator Earfquake',
-  'Frank Ocean Chanel',
-  'MF DOOM Accordion',
-  'Brent Faiyaz Clouded',
-  'Mac Miller Circles'
+// ── Recommendations ────────────────────────────────────
+// Curated suggestions based on your actual library taste
+const CURATED_RECS = [
+  { q: 'Brent Faiyaz Gravity' },
+  { q: 'Emotional Oranges Away' },
+  { q: 'Channel Tres Controller' },
+  { q: 'Still Woozy Goodie Bag' },
+  { q: 'Amine REEL IT IN' },
+  { q: 'Sampha Process' },
+  { q: 'Toro y Moi So Many Details' },
+  { q: 'Blood Orange Champagne Coast' },
+  { q: 'Sonder Too Fast' },
+  { q: 'Thundercat Them Changes' },
+  { q: 'KAYTRANADA 10\%' },
+  { q: 'Steve Lacy Dark Red' },
 ];
+
+function shuffle(arr) { return arr.sort(() => Math.random() - 0.5); }
 
 async function loadRecs() {
   document.getElementById('recs-area').innerHTML = '<div class="status-msg">Finding tracks...</div>';
-
-  // Get seed track IDs
-  const seedIds = [];
-  for (const q of SEED_TRACKS_QUERIES.slice(0, 3)) {
-    const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=1`);
-    if (data?.tracks?.items?.[0]) seedIds.push(data.tracks.items[0].id);
+  const picked = shuffle([...CURATED_RECS]).slice(0, 8);
+  const tracks = [];
+  for (const rec of picked) {
+    const data = await api(`/search?q=${encodeURIComponent(rec.q)}&type=track&limit=1`);
+    if (data?.tracks?.items?.[0]) tracks.push(data.tracks.items[0]);
   }
-
-  if (!seedIds.length) {
+  if (!tracks.length) {
     document.getElementById('recs-area').innerHTML = '<div class="status-msg error">Couldn\'t load recommendations.</div>';
     return;
   }
-
-  const data = await api(`/recommendations?seed_tracks=${seedIds.slice(0,5).join(',')}&limit=8&target_energy=0.6&target_valence=0.45`);
-  if (!data?.tracks?.length) {
-    document.getElementById('recs-area').innerHTML = '<div class="status-msg error">No recommendations found.</div>';
-    return;
-  }
-  renderTracks(data.tracks, 'recs-area');
+  renderTracks(tracks, 'recs-area');
 }
 
 // ── Init ──────────────────────────────────────────────
