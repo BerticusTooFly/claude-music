@@ -454,6 +454,67 @@
 
   .fade-in { animation: fadeIn 0.3s ease; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  /* Mood filter */
+  .mood-section { margin-bottom: 24px; }
+  .mood-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .mood-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 8px 16px;
+    border-radius: 2px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+  .mood-btn:hover { border-color: var(--green); color: var(--text); }
+  .mood-btn.active { border-color: var(--green); color: var(--green); background: rgba(29,185,84,0.08); }
+
+  /* Blocked panel */
+  .blocked-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px;
+    margin-top: 16px;
+  }
+  .blocked-artist {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .blocked-artist:last-child { border-bottom: none; }
+  .unblock-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 2px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: 'DM Mono', monospace;
+    transition: all 0.15s;
+  }
+  .unblock-btn:hover { border-color: var(--green); color: var(--green); }
+  .block-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 6px;
+    line-height: 1;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+  .block-btn:hover { color: #e05; }
 </style>
 </head>
 <body>
@@ -521,13 +582,36 @@
       <div class="status-msg">Search for something, or I'll suggest tracks based on your taste.</div>
     </div>
 
+    <!-- Mood filter -->
+    <div class="mood-section">
+      <span class="search-label">Mood</span>
+      <div class="mood-row">
+        <button class="mood-btn active" data-mood="vibes" onclick="setMood('vibes')">Vibes</button>
+        <button class="mood-btn" data-mood="chill" onclick="setMood('chill')">Chill</button>
+        <button class="mood-btn" data-mood="hype" onclick="setMood('hype')">Hype</button>
+        <button class="mood-btn" data-mood="latenight" onclick="setMood('latenight')">Late Night</button>
+      </div>
+    </div>
+
     <!-- Quick recs -->
     <div class="rec-section">
       <div class="section-header">
         <span class="search-label" style="margin:0">Quick picks for you</span>
-        <button class="btn btn-ghost" onclick="loadRecs()">Refresh</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-ghost" onclick="showBlocked()" id="blocked-btn">Blocked</button>
+          <button class="btn btn-ghost" onclick="loadRecs()">Refresh</button>
+        </div>
       </div>
       <div id="recs-area"><div class="status-msg">Loading suggestions...</div></div>
+    </div>
+
+    <!-- Blocked artists panel -->
+    <div id="blocked-panel" style="display:none" class="blocked-panel">
+      <div class="section-header">
+        <span class="search-label" style="margin:0">Blocked Artists</span>
+        <button class="btn btn-ghost" onclick="document.getElementById('blocked-panel').style.display='none'">Close</button>
+      </div>
+      <div id="blocked-list"></div>
     </div>
   </div>
 </div>
@@ -650,6 +734,7 @@ async function api(path, opts = {}) {
 function showApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = 'block';
+  restoreMood();
   startPolling();
   loadRecs();
 }
@@ -782,7 +867,8 @@ function renderTracks(tracks, containerId) {
     const img = t.album.images[2] || t.album.images[0];
     const item = document.createElement('div');
     item.className = 'result-item';
-    item.onclick = () => {
+    item.onclick = (e) => {
+      if (e.target.classList.contains('block-btn')) return;
       saveToHistory(t);
       playTrack(t.uri);
     };
@@ -794,11 +880,75 @@ function renderTracks(tracks, containerId) {
         <div class="result-meta">${t.artists.map(a=>a.name).join(', ')} · ${t.album.name}</div>
       </div>
       <span class="result-duration">${fmtMs(t.duration_ms)}</span>
+      <button class="block-btn" title="Block artist" onclick="event.stopPropagation();blockArtist('${t.artists[0].name}')">✕</button>
       <span class="play-icon">▶</span>
     `;
     div.appendChild(item);
   });
   el.appendChild(div);
+}
+
+// ── Mood Filter ──────────────────────────────────────
+let currentMood = localStorage.getItem('cm_mood') || 'vibes';
+
+const MOOD_KEYWORDS = {
+  vibes:     { extra: '', bias: '' },
+  chill:     { extra: 'acoustic mellow', bias: 'lo-fi smooth' },
+  hype:      { extra: 'energetic upbeat', bias: 'banger' },
+  latenight: { extra: 'dark moody atmospheric', bias: 'late night' },
+};
+
+function setMood(mood) {
+  currentMood = mood;
+  localStorage.setItem('cm_mood', mood);
+  document.querySelectorAll('.mood-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mood === mood);
+  });
+  loadRecs();
+}
+
+// Restore mood button state on load
+function restoreMood() {
+  document.querySelectorAll('.mood-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mood === currentMood);
+  });
+}
+
+// ── Artist Blocking ───────────────────────────────────
+function getBlocked() {
+  try { return new Set(JSON.parse(localStorage.getItem('cm_blocked') || '[]')); } catch { return new Set(); }
+}
+
+function blockArtist(artistName) {
+  const blocked = getBlocked();
+  blocked.add(artistName.toLowerCase());
+  localStorage.setItem('cm_blocked', JSON.stringify([...blocked]));
+  loadRecs();
+}
+
+function unblockArtist(artistName) {
+  const blocked = getBlocked();
+  blocked.delete(artistName.toLowerCase());
+  localStorage.setItem('cm_blocked', JSON.stringify([...blocked]));
+  showBlocked();
+  loadRecs();
+}
+
+function showBlocked() {
+  const panel = document.getElementById('blocked-panel');
+  const list = document.getElementById('blocked-list');
+  const blocked = getBlocked();
+  panel.style.display = 'block';
+  if (!blocked.size) {
+    list.innerHTML = '<div class="status-msg">No blocked artists yet. Click the ✕ on a recommendation to block.</div>';
+    return;
+  }
+  list.innerHTML = [...blocked].map(a => `
+    <div class="blocked-artist">
+      <span>${a}</span>
+      <button class="unblock-btn" onclick="unblockArtist('${a.replace(/'/g, "\'")}')">Unblock</button>
+    </div>
+  `).join('');
 }
 
 // ── Recommendations (Adaptive) ──────────────────
@@ -848,16 +998,26 @@ async function loadRecs() {
   const seenRecs = getSeenRecs();
   const exclude = new Set([...played, ...seenRecs]);
 
+  const blocked = getBlocked();
+  const mood = MOOD_KEYWORDS[currentMood] || MOOD_KEYWORDS.vibes;
+
   if (history.length >= 3) {
-    // Adaptive mode: use top artists, random offset to avoid same results
+    // Adaptive mode: use top artists, random offset, mood bias, blocked filter
     const topArtists = getTopArtists(8);
-    const queries = shuffle([...topArtists]).map(a => `artist:"${a}"`);
+    const queries = shuffle([...topArtists]).map(a => {
+      const moodExtra = mood.extra ? ` ${mood.extra}` : '';
+      return `artist:"${a}"${moodExtra}`;
+    });
     for (const q of queries) {
-      // Random offset (0, 5, 10, 15, 20) so we don't always get track #1
       const offset = Math.floor(Math.random() * 5) * 5;
       const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=10&offset=${offset}`);
       if (data?.tracks?.items) {
-        const fresh = data.tracks.items.filter(t => !exclude.has(t.name.toLowerCase()));
+        const fresh = data.tracks.items.filter(t => {
+          if (exclude.has(t.name.toLowerCase())) return false;
+          // Filter out blocked artists
+          if (t.artists.some(a => blocked.has(a.name.toLowerCase()))) return false;
+          return true;
+        });
         if (fresh.length) {
           const pick = fresh[Math.floor(Math.random() * Math.min(fresh.length, 4))];
           tracks.push(pick);
