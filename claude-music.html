@@ -1012,7 +1012,7 @@ async function loadRecs() {
     const topArtists = getTopArtists(8);
     const queries = shuffle([...topArtists]).map(a => {
       const moodExtra = mood.extra ? ` ${mood.extra}` : '';
-      return `artist:"${a}"${moodExtra}`;
+      return `${a}${moodExtra}`;
     });
     for (const q of queries) {
       const offset = Math.floor(Math.random() * 4) * 5;
