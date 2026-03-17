@@ -739,6 +739,29 @@ async function search() {
   renderTracks(data.tracks.items, 'results-area');
 }
 
+// ── Play History ─────────────────────────────────────
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem('cm_history') || '[]'); } catch { return []; }
+}
+
+function saveToHistory(track) {
+  const history = getHistory();
+  // Store artist names and track name, avoid duplicates
+  const entry = {
+    trackName: track.name,
+    artists: track.artists.map(a => a.name),
+    artistNames: track.artists.map(a => a.name).join(', '),
+    ts: Date.now()
+  };
+  const exists = history.find(h => h.trackName === entry.trackName && h.artistNames === entry.artistNames);
+  if (!exists) {
+    history.unshift(entry);
+    // Keep last 100 tracks
+    if (history.length > 100) history.pop();
+    localStorage.setItem('cm_history', JSON.stringify(history));
+  }
+}
+
 function renderTracks(tracks, containerId) {
   const el = document.getElementById(containerId);
   el.innerHTML = '';
@@ -748,7 +771,10 @@ function renderTracks(tracks, containerId) {
     const img = t.album.images[2] || t.album.images[0];
     const item = document.createElement('div');
     item.className = 'result-item';
-    item.onclick = () => playTrack(t.uri);
+    item.onclick = () => {
+      saveToHistory(t);
+      playTrack(t.uri);
+    };
     item.innerHTML = `
       <span class="result-num">${i+1}</span>
       ${img ? `<img class="result-thumb" src="${img.url}" alt="">` : '<div class="result-thumb"></div>'}
@@ -764,37 +790,75 @@ function renderTracks(tracks, containerId) {
   el.appendChild(div);
 }
 
-// ── Recommendations ────────────────────────────────────
-// Curated suggestions based on your actual library taste
-const CURATED_RECS = [
-  { q: 'Brent Faiyaz Gravity' },
-  { q: 'Emotional Oranges Away' },
-  { q: 'Channel Tres Controller' },
-  { q: 'Still Woozy Goodie Bag' },
-  { q: 'Amine REEL IT IN' },
-  { q: 'Sampha Process' },
-  { q: 'Toro y Moi So Many Details' },
-  { q: 'Blood Orange Champagne Coast' },
-  { q: 'Sonder Too Fast' },
-  { q: 'Thundercat Them Changes' },
-  { q: 'KAYTRANADA 10\%' },
-  { q: 'Steve Lacy Dark Red' },
+// ── Recommendations (Adaptive) ──────────────────
+// Fallback pool for new users with no history
+const FALLBACK_RECS = [
+  'Brent Faiyaz Gravity', 'Emotional Oranges Away', 'Channel Tres Controller',
+  'Still Woozy Goodie Bag', 'Amine REEL IT IN', 'Sampha Process',
+  'Toro y Moi So Many Details', 'Blood Orange Champagne Coast',
+  'Sonder Too Fast', 'Thundercat Them Changes', 'KAYTRANADA 10%',
+  'Steve Lacy Dark Red', 'Cautious Clay Cold War', 'UMO Ffunny Ffaces',
+  'Mild High Club Skiptracing', 'Clairo Bags', 'Rex Orange County Best Friend'
 ];
 
 function shuffle(arr) { return arr.sort(() => Math.random() - 0.5); }
 
+// Pick artists from history, weighted toward more-played ones
+function getTopArtists(limit = 6) {
+  const history = getHistory();
+  const counts = {};
+  history.forEach(h => {
+    h.artists.forEach(a => { counts[a] = (counts[a] || 0) + 1; });
+  });
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(e => e[0]);
+}
+
 async function loadRecs() {
   document.getElementById('recs-area').innerHTML = '<div class="status-msg">Finding tracks...</div>';
-  const picked = shuffle([...CURATED_RECS]).slice(0, 8);
+  const history = getHistory();
   const tracks = [];
-  for (const rec of picked) {
-    const data = await api(`/search?q=${encodeURIComponent(rec.q)}&type=track&limit=1`);
-    if (data?.tracks?.items?.[0]) tracks.push(data.tracks.items[0]);
+  const seen = new Set(history.map(h => h.trackName.toLowerCase()));
+
+  if (history.length >= 3) {
+    // Adaptive mode: search for tracks by top artists, avoid already-played ones
+    const topArtists = getTopArtists(6);
+    const queries = shuffle([...topArtists]).slice(0, 8).map(a => `artist:"${a}"`);
+    for (const q of queries) {
+      const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=4`);
+      if (data?.tracks?.items) {
+        const fresh = data.tracks.items.filter(t => !seen.has(t.name.toLowerCase()));
+        if (fresh.length) tracks.push(fresh[Math.floor(Math.random() * fresh.length)]);
+      }
+      if (tracks.length >= 8) break;
+    }
+    // Top up with fallback if needed
+    if (tracks.length < 8) {
+      const fallback = shuffle([...FALLBACK_RECS]).slice(0, 8 - tracks.length);
+      for (const q of fallback) {
+        const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=1`);
+        if (data?.tracks?.items?.[0]) tracks.push(data.tracks.items[0]);
+      }
+    }
+  } else {
+    // New user fallback
+    const picked = shuffle([...FALLBACK_RECS]).slice(0, 8);
+    for (const q of picked) {
+      const data = await api(`/search?q=${encodeURIComponent(q)}&type=track&limit=1`);
+      if (data?.tracks?.items?.[0]) tracks.push(data.tracks.items[0]);
+    }
   }
+
   if (!tracks.length) {
     document.getElementById('recs-area').innerHTML = '<div class="status-msg error">Couldn\'t load recommendations.</div>';
     return;
   }
+
+  // Show how many tracks in history
+  const histNote = history.length > 0 ? `<div style="font-size:10px;color:var(--muted);margin-bottom:8px;letter-spacing:1px">${history.length} TRACKS IN YOUR HISTORY</div>` : '';
+  document.getElementById('recs-area').insertAdjacentHTML('beforebegin', histNote);
   renderTracks(tracks, 'recs-area');
 }
 
