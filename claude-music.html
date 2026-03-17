@@ -815,10 +815,16 @@ async function setVolume(v) {
 }
 
 async function playTrack(uri) {
-  await api('/me/player/play', {
-    method: 'PUT',
-    body: JSON.stringify({ uris: [uri] })
-  });
+  // Get active device first so playback always targets the right one
+  const devices = await api('/me/player/devices');
+  let deviceId = null;
+  if (devices?.devices?.length) {
+    const active = devices.devices.find(d => d.is_active) || devices.devices[0];
+    deviceId = active.id;
+  }
+  const body = { uris: [uri] };
+  const path = deviceId ? `/me/player/play?device_id=${deviceId}` : '/me/player/play';
+  await api(path, { method: 'PUT', body: JSON.stringify(body) });
   setTimeout(updateNowPlaying, 800);
 }
 
